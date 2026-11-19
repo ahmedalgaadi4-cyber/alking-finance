@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>دفتر الحسابات</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#f3f5f4;--card:#fff;--ink:#17211f;--mute:#667370;--line:#dfe5e3;--in:#0f7b5f;--out:#b3382c;--accent:#17211f;}
+  @media (prefers-color-scheme:dark){:root{--bg:#121816;--card:#1a2321;--ink:#e8efed;--mute:#93a39f;--line:#2b3835;--in:#3fcf9f;--out:#ff8b7d;--accent:#e8efed;}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans Arabic",Tahoma,sans-serif;line-height:1.6}
+  .wrap{max-width:760px;margin:0 auto;padding:20px 16px 60px}
+  h1{font-size:1.3rem;margin:0}
+  header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+  label{display:block;font-size:.85rem;color:var(--mute);margin-bottom:4px}
+  input,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+  input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  button{font:inherit;cursor:pointer;border:0;border-radius:6px;padding:10px 16px;background:var(--accent);color:var(--bg)}
+  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .grid .full{grid-column:1/-1}
+  .totals{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .totals div{text-align:center}
+  .totals b{display:block;font-size:1.25rem;direction:ltr}
+  .in{color:var(--in)} .out{color:var(--out)}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:0}
+  .row small{color:var(--mute);display:block}
+  .amt{font-weight:600;direction:ltr;white-space:nowrap}
+  .del{background:transparent;color:var(--mute);padding:4px 8px;border:1px solid var(--line)}
+  .bar{display:flex;gap:8px;align-items:end;margin-bottom:12px}
+  .bar>div{flex:1}
+  #msg{min-height:1.4em;font-size:.9rem;color:var(--out);margin-top:8px}
+  .empty{color:var(--mute);text-align:center;padding:20px 0}
+  .hidden{display:none}
+  @media (max-width:520px){.grid{grid-template-columns:1fr}.totals b{font-size:1rem}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- شاشة الدخول -->
+  <section id="loginView" class="hidden">
+    <header><h1>دفتر الحسابات</h1></header>
+    <div class="panel">
+      <label for="email">البريد الإلكتروني</label>
+      <input id="email" type="email" autocomplete="username" dir="ltr">
+      <div style="height:12px"></div>
+      <label for="password">كلمة المرور</label>
+      <input id="password" type="password" autocomplete="current-password" dir="ltr">
+      <div style="height:16px"></div>
+      <button id="loginBtn">تسجيل الدخول</button>
+      <div id="msg" role="alert"></div>
+    </div>
+  </section>
+
+  <!-- التطبيق -->
+  <section id="appView" class="hidden">
+    <header>
+      <h1>دفتر الحسابات</h1>
+      <button class="ghost" id="logoutBtn">تسجيل الخروج</button>
+    </header>
+
+    <div class="panel">
+      <div class="bar">
+        <div><label for="month">الشهر</label><input id="month" type="month"></div>
+        <button class="ghost" id="allBtn">كل الفترات</button>
+        <button class="ghost" id="csvBtn">تصدير CSV</button>
+      </div>
+      <div class="totals">
+        <div><span>الوارد</span><b class="in" id="tIn">0</b></div>
+        <div><span>المصروف</span><b class="out" id="tOut">0</b></div>
+        <div><span>الرصيد</span><b id="tBal">0</b></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="grid">
+        <div><label for="kind">النوع</label>
+          <select id="kind"><option value="expense">مصروف</option><option value="income">وارد</option></select></div>
+        <div><label for="amount">المبلغ</label><input id="amount" type="number" min="0" step="0.01" inputmode="decimal" dir="ltr"></div>
+        <div><label for="category">الفئة</label><input id="category" list="cats" placeholder="مثال: طعام، فواتير، راتب">
+          <datalist id="cats"></datalist></div>
+        <div><label for="date">التاريخ</label><input id="date" type="date" dir="ltr"></div>
+        <div class="full"><label for="note">ملاحظة (اختياري)</label><input id="note"></div>
+        <div class="full"><button id="addBtn">إضافة العملية</button></div>
+      </div>
+      <div id="appMsg" role="alert" style="min-height:1.4em;font-size:.9rem;color:var(--out);margin-top:8px"></div>
+    </div>
+
+    <div class="panel" id="list"></div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+/* ===== الإعدادات: استبدل القيمتين من لوحة Supabase (Project Settings > API) ===== */
+const SUPABASE_URL = "https://fpxthuiyshmmnrfjhqcc.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable___otMdd1kfWmnlhwqomAbA_lKwE2gtc";
+const CURRENCY = ""; // مثال: "ر.س" أو "$" أو اتركها فارغة
+/* مهم: لا تضع هنا مفتاح service_role أبداً */
+
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = id => document.getElementById(id);
+let rows = [];
+
+const fmt = n => Number(n).toLocaleString("en-US", {maximumFractionDigits: 2}) + (CURRENCY ? " " + CURRENCY : "");
+const today = () => new Date().toISOString().slice(0, 10);
+
+/* ---------- الدخول والخروج ---------- */
+async function refreshSession() {
+  const { data: { session } } = await db.auth.getSession();
+  $("loginView").classList.toggle("hidden", !!session);
+  $("appView").classList.toggle("hidden", !session);
+  if (session) {
+    $("date").value = today();
+    $("month").value = today().slice(0, 7);
+    await load();
+  }
+}
+
+$("loginBtn").onclick = async () => {
+  $("msg").textContent = "";
+  const { error } = await db.auth.signInWithPassword({
+    email: $("email").value.trim(),
+    password: $("password").value
+  });
+  if (error) { $("msg").textContent = "فشل الدخول: تأكد من البريد وكلمة المرور."; return; }
+  $("password").value = "";
+  refreshSession();
+};
+
+$("logoutBtn").onclick = async () => { await db.auth.signOut(); rows = []; refreshSession(); };
+
+/* ---------- البيانات ---------- */
+async function load() {
+  const { data, error } = await db.from("transactions")
+    .select("*").order("tx_date", { ascending: false }).order("created_at", { ascending: false });
+  if (error) { $("appMsg").textContent = "تعذّر جلب البيانات: " + error.message; return; }
+  rows = data;
+  $("cats").replaceChildren(...[...new Set(rows.map(r => r.category))].map(c => {
+    const o = document.createElement("option"); o.value = c; return o;
+  }));
+  render();
+}
+
+function visibleRows() {
+  const m = $("month").value;
+  return m ? rows.filter(r => r.tx_date.startsWith(m)) : rows;
+}
+
+function render() {
+  const vis = visibleRows();
+  const tin = vis.filter(r => r.kind === "income").reduce((s, r) => s + Number(r.amount), 0);
+  const tout = vis.filter(r => r.kind === "expense").reduce((s, r) => s + Number(r.amount), 0);
+  $("tIn").textContent = fmt(tin);
+  $("tOut").textContent = fmt(tout);
+  $("tBal").textContent = fmt(tin - tout);
+
+  const list = $("list");
+  list.replaceChildren();
+  if (!vis.length) {
+    const e = document.createElement("div");
+    e.className = "empty"; e.textContent = "لا توجد عمليات في هذه الفترة. أضف أول عملية من النموذج أعلاه.";
+    list.append(e); return;
+  }
+  vis.forEach(r => {
+    const row = document.createElement("div"); row.className = "row";
+    const left = document.createElement("div");
+    const t = document.createElement("div"); t.textContent = r.category;
+    const s = document.createElement("small"); s.textContent = r.tx_date + (r.note ? " — " + r.note : "");
+    left.append(t, s);
+    const a = document.createElement("div");
+    a.className = "amt " + (r.kind === "income" ? "in" : "out");
+    a.textContent = (r.kind === "income" ? "+" : "−") + fmt(r.amount);
+    const d = document.createElement("button");
+    d.className = "del"; d.textContent = "حذف"; d.onclick = () => remove(r.id);
+    row.append(left, a, d);
+    list.append(row);
+  });
+}
+
+$("addBtn").onclick = async () => {
+  $("appMsg").textContent = "";
+  const amount = parseFloat($("amount").value);
+  const category = $("category").value.trim();
+  if (!(amount > 0) || !category || !$("date").value) {
+    $("appMsg").textContent = "أدخل مبلغاً أكبر من صفر وفئة وتاريخاً."; return;
+  }
+  const { error } = await db.from("transactions").insert({
+    kind: $("kind").value, amount, category,
+    note: $("note").value.trim() || null, tx_date: $("date").value
+  });
+  if (error) { $("appMsg").textContent = "تعذّر الحفظ: " + error.message; return; }
+  $("amount").value = ""; $("note").value = "";
+  load();
+};
+
+async function remove(id) {
+  if (!confirm("حذف هذه العملية نهائياً؟")) return;
+  const { error } = await db.from("transactions").delete().eq("id", id);
+  if (error) { $("appMsg").textContent = "تعذّر الحذف: " + error.message; return; }
+  load();
+}
+
+$("month").onchange = render;
+$("allBtn").onclick = () => { $("month").value = ""; render(); };
+
+/* ---------- تصدير CSV (نسخة احتياطية على جهازك) ---------- */
+$("csvBtn").onclick = () => {
+  const esc = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+  const lines = [["date", "kind", "amount", "category", "note"].join(",")]
+    .concat(visibleRows().map(r => [r.tx_date, r.kind, r.amount, r.category, r.note].map(esc).join(",")));
+  const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "transactions.csv"; a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+refreshSession();
+</script>
+</body>
+</html>
