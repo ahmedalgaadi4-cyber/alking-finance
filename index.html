@@ -11,7 +11,7 @@
   @media (prefers-color-scheme:dark){:root{--bg:#121816;--card:#1a2321;--ink:#e8efed;--mute:#93a39f;--line:#2b3835;--in:#3fcf9f;--out:#ff8b7d;--accent:#e8efed;}}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans Arabic",Tahoma,sans-serif;line-height:1.6}
-  .wrap{max-width:760px;margin:0 auto;padding:20px 16px 60px}
+  .wrap{max-width:760px;margin:0 auto;padding:20px 16px 100px}
   h1{font-size:1.3rem;margin:0}
   header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
   .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
@@ -52,6 +52,17 @@
   .cat .top span:last-child{direction:ltr;color:var(--mute);white-space:nowrap}
   .track{height:8px;background:var(--line);border-radius:4px;overflow:hidden}
   .fill{height:100%;background:var(--out);border-radius:4px}
+  .fab{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom,0px));inset-inline-start:16px;width:52px;height:52px;border-radius:50%;padding:0;display:grid;place-items:center;box-shadow:0 2px 10px rgba(0,0,0,.28);z-index:20}
+  .calc{position:fixed;bottom:calc(80px + env(safe-area-inset-bottom,0px));inset-inline-start:16px;width:280px;max-width:calc(100vw - 32px);background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;box-shadow:0 6px 24px rgba(0,0,0,.25);z-index:20;direction:ltr}
+  .calc .screen{text-align:right;padding:4px 4px 10px;word-break:break-all}
+  .calc .expr{color:var(--mute);font-size:.9rem;min-height:1.4em}
+  .calc .res{font-size:1.6rem;font-weight:600;min-height:2.2rem}
+  .keys{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .keys button{padding:12px 0;background:var(--bg);color:var(--ink);border:1px solid var(--line);font-size:1.05rem}
+  .keys button.op,.keys button.fn{color:var(--in)}
+  .keys button.eq{background:var(--accent);color:var(--bg)}
+  .keys .span2{grid-column:span 2}
+  .calc .use{width:100%;margin-top:8px;font-size:.9rem}
   .hidden{display:none}
   @media (max-width:520px){.grid{grid-template-columns:1fr}.totals b{font-size:1rem}}
 </style>
@@ -103,7 +114,7 @@
       </div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="formPanel">
       <div class="grid">
         <div><label for="kind">النوع</label>
           <select id="kind"><option value="expense">مصروف</option><option value="income">وارد</option></select></div>
@@ -123,6 +134,15 @@
     </div>
 
     <div class="panel" id="list"></div>
+
+    <button class="fab" id="calcFab" aria-label="الحاسبة">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/></svg>
+    </button>
+    <div class="calc hidden" id="calcPanel" role="dialog" aria-label="الحاسبة">
+      <div class="screen"><div class="expr" id="calcExpr"></div><div class="res" id="calcRes">0</div></div>
+      <div class="keys" id="calcKeys"></div>
+      <button class="use hidden" id="calcUse">نقل الناتج إلى خانة المبلغ</button>
+    </div>
   </section>
 </div>
 
@@ -152,6 +172,7 @@ async function refreshSession() {
     $("date").value = today();
     $("month").value = today().slice(0, 7);
     await loadRole();
+    $("formPanel").classList.toggle("hidden", myRole === "viewer");
     if (!myRole) {
       rows = []; render();
       $("addBtn").disabled = true;
@@ -166,7 +187,7 @@ async function refreshSession() {
 async function loadRole() {
   const { data, error } = await db.rpc("my_role");
   myRole = error ? null : data;
-  $("roleBadge").textContent = myRole === "owner" ? "(المالك)" : myRole === "editor" ? "(محرر: إضافة فقط)" : "";
+  $("roleBadge").textContent = myRole === "owner" ? "(المالك)" : myRole === "viewer" ? "(القراءة فقط)" : "";
 }
 
 $("loginBtn").onclick = async () => {
@@ -342,6 +363,77 @@ $("csvBtn").onclick = () => {
   URL.revokeObjectURL(a.href);
 };
 
+/* ---------- الحاسبة ---------- */
+let calcExpr = "";
+const calcKeys = [
+  ["C","C","fn"],["⌫","B","fn"],["÷","÷","op"],["×","×","op"],
+  ["7","7",""],["8","8",""],["9","9",""],["−","-","op"],
+  ["4","4",""],["5","5",""],["6","6",""],["+","+","op"],
+  ["1","1",""],["2","2",""],["3","3",""],["=","=","eq"],
+  ["0","0","span2"],["00","00",""],[".",".",""]
+];
+
+function calcEval(str) {
+  const t = str.match(/\d*\.?\d+|[+\-×÷]/g) || [];
+  let i = 0;
+  const num = () => {
+    let sign = 1;
+    while (t[i] === "-" || t[i] === "+") { if (t[i] === "-") sign = -sign; i++; }
+    const v = parseFloat(t[i++]);
+    if (isNaN(v)) throw new Error("bad");
+    return sign * v;
+  };
+  const term = () => {
+    let v = num();
+    while (t[i] === "×" || t[i] === "÷") { const op = t[i++]; const r = num(); v = op === "×" ? v * r : v / r; }
+    return v;
+  };
+  let v = term();
+  while (i < t.length && (t[i] === "+" || t[i] === "-")) { const op = t[i++]; const r = term(); v = op === "+" ? v + r : v - r; }
+  if (i < t.length || !isFinite(v)) throw new Error("bad");
+  return Math.round(v * 1e8) / 1e8;
+}
+
+function calcShow() {
+  $("calcExpr").textContent = calcExpr.replace(/-/g, "−");
+  let r = "0";
+  try { if (calcExpr) r = String(calcEval(calcExpr)); } catch (e) { r = ""; }
+  $("calcRes").textContent = r;
+}
+
+function calcPress(v) {
+  if (v === "C") calcExpr = "";
+  else if (v === "B") calcExpr = calcExpr.slice(0, -1);
+  else if (v === "=") { try { calcExpr = String(calcEval(calcExpr)); } catch (e) {} }
+  else if ("+-×÷".includes(v)) {
+    if (!calcExpr && v !== "-") return;
+    if (/[+\-×÷]$/.test(calcExpr)) calcExpr = calcExpr.slice(0, -1) + v; else calcExpr += v;
+  } else calcExpr += v;
+  calcShow();
+}
+
+calcKeys.forEach(([label, val, cls]) => {
+  const b = document.createElement("button");
+  b.textContent = label; b.className = cls; b.onclick = () => calcPress(val);
+  $("calcKeys").append(b);
+});
+
+$("calcFab").onclick = () => {
+  $("calcPanel").classList.toggle("hidden");
+  $("calcUse").classList.toggle("hidden", $("formPanel").classList.contains("hidden"));
+};
+
+$("calcUse").onclick = () => {
+  try {
+    const r = calcEval(calcExpr || "0");
+    if (!(r > 0)) { $("calcRes").textContent = "المبلغ يجب أن يكون أكبر من صفر"; return; }
+    $("amount").value = String(Math.round(r * 100) / 100);
+    $("calcPanel").classList.add("hidden");
+    $("amount").focus();
+  } catch (e) { $("calcRes").textContent = "عملية غير صحيحة"; }
+};
+
+calcShow();
 refreshSession();
 </script>
 </body>
