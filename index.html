@@ -107,7 +107,12 @@
 
     <div class="panel">
       <div class="bar">
-        <div><label for="month">الشهر</label><input id="month" type="month"></div>
+        <div><label for="month">الشهر</label>
+          <div style="display:flex;gap:6px">
+            <button class="ghost" id="prevMonth" aria-label="الشهر السابق" style="padding:10px 14px">›</button>
+            <input id="month" type="month">
+            <button class="ghost" id="nextMonth" aria-label="الشهر التالي" style="padding:10px 14px">‹</button>
+          </div></div>
         <button class="ghost" id="allBtn">كل الفترات</button>
         <button class="ghost" id="csvBtn">تصدير CSV</button>
       </div>
@@ -171,7 +176,10 @@ let myRole = null;
 let editingId = null;
 
 const fmt = n => Number(n).toLocaleString("en-US", {maximumFractionDigits: 2}) + (CURRENCY ? " " + CURRENCY : "");
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+};
 
 /* ---------- الدخول والخروج ---------- */
 async function refreshSession() {
@@ -417,6 +425,17 @@ $("pwSave").onclick = async () => {
   m.style.color = "var(--in)"; m.textContent = "تم تغيير كلمة المرور.";
 };
 
+function shiftMonth(delta) {
+  const v = $("month").value || today().slice(0, 7);
+  let [y, m] = v.split("-").map(Number);
+  m += delta;
+  while (m < 1) { m += 12; y--; }
+  while (m > 12) { m -= 12; y++; }
+  $("month").value = y + "-" + String(m).padStart(2, "0");
+  render();
+}
+$("prevMonth").onclick = () => shiftMonth(-1);
+$("nextMonth").onclick = () => shiftMonth(1);
 $("month").onchange = render;
 $("allBtn").onclick = () => { $("month").value = ""; render(); };
 
