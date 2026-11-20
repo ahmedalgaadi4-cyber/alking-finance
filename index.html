@@ -35,6 +35,23 @@
   .bar>div{flex:1}
   #msg{min-height:1.4em;font-size:.9rem;color:var(--out);margin-top:8px}
   .empty{color:var(--mute);text-align:center;padding:20px 0}
+  .hero{text-align:center;padding:4px 0 14px}
+  .hero span{color:var(--mute);font-size:.85rem}
+  .hero b{display:block;font-size:2.2rem;font-weight:600;direction:ltr;line-height:1.25}
+  .sub{display:grid;grid-template-columns:1fr 1fr;gap:12px;border-top:1px solid var(--line);padding-top:12px}
+  .sub div{text-align:center}
+  .sub span{color:var(--mute);font-size:.85rem}
+  .sub b{display:block;direction:ltr;font-size:1.05rem}
+  .row{border-inline-start:3px solid var(--line);padding-inline-start:10px}
+  .row.income{border-inline-start-color:var(--in)}
+  .row.expense{border-inline-start-color:var(--out)}
+  .ptitle{font-size:1rem;margin:0 0 12px}
+  .cat{margin-bottom:12px}
+  .cat:last-child{margin-bottom:0}
+  .cat .top{display:flex;justify-content:space-between;gap:10px;font-size:.9rem;margin-bottom:4px}
+  .cat .top span:last-child{direction:ltr;color:var(--mute);white-space:nowrap}
+  .track{height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+  .fill{height:100%;background:var(--out);border-radius:4px}
   .hidden{display:none}
   @media (max-width:520px){.grid{grid-template-columns:1fr}.totals b{font-size:1rem}}
 </style>
@@ -60,9 +77,18 @@
   <!-- التطبيق -->
   <section id="appView" class="hidden">
     <header>
-      <h1>دفتر الحسابات</h1>
-      <button class="ghost" id="logoutBtn">تسجيل الخروج</button>
+      <div><h1 style="display:inline">دفتر الحسابات</h1> <small id="roleBadge" style="color:var(--mute)"></small></div>
+      <div style="display:flex;gap:8px"><button class="ghost" id="pwBtn">كلمة المرور</button><button class="ghost" id="logoutBtn">تسجيل الخروج</button></div>
     </header>
+
+    <div class="panel hidden" id="pwPanel">
+      <div class="grid">
+        <div><label for="pw1">كلمة المرور الجديدة (10 أحرف على الأقل)</label><input id="pw1" type="password" autocomplete="new-password" dir="ltr"></div>
+        <div><label for="pw2">تأكيد كلمة المرور</label><input id="pw2" type="password" autocomplete="new-password" dir="ltr"></div>
+        <div class="full"><button id="pwSave">حفظ كلمة المرور</button></div>
+      </div>
+      <div id="pwMsg" role="alert" style="min-height:1.4em;font-size:.9rem;margin-top:8px"></div>
+    </div>
 
     <div class="panel">
       <div class="bar">
@@ -70,10 +96,10 @@
         <button class="ghost" id="allBtn">كل الفترات</button>
         <button class="ghost" id="csvBtn">تصدير CSV</button>
       </div>
-      <div class="totals">
+      <div class="hero"><span>الرصيد</span><b id="tBal">0</b></div>
+      <div class="sub">
         <div><span>الوارد</span><b class="in" id="tIn">0</b></div>
         <div><span>المصروف</span><b class="out" id="tOut">0</b></div>
-        <div><span>الرصيد</span><b id="tBal">0</b></div>
       </div>
     </div>
 
@@ -86,9 +112,14 @@
           <datalist id="cats"></datalist></div>
         <div><label for="date">التاريخ</label><input id="date" type="date" dir="ltr"></div>
         <div class="full"><label for="note">ملاحظة (اختياري)</label><input id="note"></div>
-        <div class="full"><button id="addBtn">إضافة العملية</button></div>
+        <div class="full" style="display:flex;gap:8px"><button id="addBtn">إضافة العملية</button><button class="ghost hidden" id="cancelEditBtn">إلغاء التعديل</button></div>
       </div>
       <div id="appMsg" role="alert" style="min-height:1.4em;font-size:.9rem;color:var(--out);margin-top:8px"></div>
+    </div>
+
+    <div class="panel">
+      <h2 class="ptitle">المصروفات حسب الفئة</h2>
+      <div id="chart"></div>
     </div>
 
     <div class="panel" id="list"></div>
@@ -106,6 +137,8 @@ const CURRENCY = ""; // مثال: "ر.س" أو "$" أو اتركها فارغة
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = id => document.getElementById(id);
 let rows = [];
+let myRole = null;
+let editingId = null;
 
 const fmt = n => Number(n).toLocaleString("en-US", {maximumFractionDigits: 2}) + (CURRENCY ? " " + CURRENCY : "");
 const today = () => new Date().toISOString().slice(0, 10);
@@ -118,8 +151,22 @@ async function refreshSession() {
   if (session) {
     $("date").value = today();
     $("month").value = today().slice(0, 7);
+    await loadRole();
+    if (!myRole) {
+      rows = []; render();
+      $("addBtn").disabled = true;
+      $("appMsg").textContent = "هذا الحساب لا يملك صلاحية الوصول. تواصل مع مالك الموقع.";
+      return;
+    }
+    $("addBtn").disabled = false;
     await load();
   }
+}
+
+async function loadRole() {
+  const { data, error } = await db.rpc("my_role");
+  myRole = error ? null : data;
+  $("roleBadge").textContent = myRole === "owner" ? "(المالك)" : myRole === "editor" ? "(محرر: إضافة فقط)" : "";
 }
 
 $("loginBtn").onclick = async () => {
@@ -133,7 +180,7 @@ $("loginBtn").onclick = async () => {
   refreshSession();
 };
 
-$("logoutBtn").onclick = async () => { await db.auth.signOut(); rows = []; refreshSession(); };
+$("logoutBtn").onclick = async () => { await db.auth.signOut(); rows = []; myRole = null; refreshSession(); };
 
 /* ---------- البيانات ---------- */
 async function load() {
@@ -159,6 +206,8 @@ function render() {
   $("tIn").textContent = fmt(tin);
   $("tOut").textContent = fmt(tout);
   $("tBal").textContent = fmt(tin - tout);
+  $("tBal").className = (tin - tout) < 0 ? "out" : "";
+  renderChart(vis);
 
   const list = $("list");
   list.replaceChildren();
@@ -168,7 +217,7 @@ function render() {
     list.append(e); return;
   }
   vis.forEach(r => {
-    const row = document.createElement("div"); row.className = "row";
+    const row = document.createElement("div"); row.className = "row " + r.kind;
     const left = document.createElement("div");
     const t = document.createElement("div"); t.textContent = r.category;
     const s = document.createElement("small"); s.textContent = r.tx_date + (r.note ? " — " + r.note : "");
@@ -178,8 +227,41 @@ function render() {
     a.textContent = (r.kind === "income" ? "+" : "−") + fmt(r.amount);
     const d = document.createElement("button");
     d.className = "del"; d.textContent = "حذف"; d.onclick = () => remove(r.id);
-    row.append(left, a, d);
+    const ed = document.createElement("button");
+    ed.className = "del"; ed.textContent = "تعديل"; ed.onclick = () => startEdit(r);
+    const acts = document.createElement("div"); acts.style.cssText = "display:flex;gap:6px";
+    acts.append(ed, d);
+    if (myRole === "owner") row.append(left, a, acts); else row.append(left, a);
     list.append(row);
+  });
+}
+
+function renderChart(vis) {
+  const box = $("chart");
+  box.replaceChildren();
+  const sums = {};
+  vis.filter(r => r.kind === "expense").forEach(r => {
+    sums[r.category] = (sums[r.category] || 0) + Number(r.amount);
+  });
+  const entries = Object.entries(sums).sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((s, e) => s + e[1], 0);
+  if (!entries.length) {
+    const e = document.createElement("div");
+    e.className = "empty"; e.textContent = "لا توجد مصروفات في هذه الفترة.";
+    box.append(e); return;
+  }
+  entries.forEach(([name, val]) => {
+    const pct = val / total * 100;
+    const wrap = document.createElement("div"); wrap.className = "cat";
+    const top = document.createElement("div"); top.className = "top";
+    const n = document.createElement("span"); n.textContent = name;
+    const v = document.createElement("span"); v.textContent = fmt(val) + " · " + pct.toFixed(0) + "%";
+    top.append(n, v);
+    const track = document.createElement("div"); track.className = "track";
+    const fill = document.createElement("div"); fill.className = "fill"; fill.style.width = pct + "%";
+    track.append(fill);
+    wrap.append(top, track);
+    box.append(wrap);
   });
 }
 
@@ -190,21 +272,61 @@ $("addBtn").onclick = async () => {
   if (!(amount > 0) || !category || !$("date").value) {
     $("appMsg").textContent = "أدخل مبلغاً أكبر من صفر وفئة وتاريخاً."; return;
   }
-  const { error } = await db.from("transactions").insert({
+  const payload = {
     kind: $("kind").value, amount, category,
     note: $("note").value.trim() || null, tx_date: $("date").value
-  });
-  if (error) { $("appMsg").textContent = "تعذّر الحفظ: " + error.message; return; }
-  $("amount").value = ""; $("note").value = "";
+  };
+  if (editingId) {
+    const { data, error } = await db.from("transactions").update(payload).eq("id", editingId).select();
+    if (error) { $("appMsg").textContent = "تعذّر الحفظ: " + error.message; return; }
+    if (!data || !data.length) { $("appMsg").textContent = "لا تملك صلاحية التعديل."; return; }
+    stopEdit();
+  } else {
+    const { error } = await db.from("transactions").insert(payload);
+    if (error) { $("appMsg").textContent = "تعذّر الحفظ: " + error.message; return; }
+    $("amount").value = ""; $("note").value = "";
+  }
   load();
 };
 
+function startEdit(r) {
+  editingId = r.id;
+  $("kind").value = r.kind; $("amount").value = r.amount; $("category").value = r.category;
+  $("date").value = r.tx_date; $("note").value = r.note || "";
+  $("addBtn").textContent = "حفظ التعديل";
+  $("cancelEditBtn").classList.remove("hidden");
+  $("appMsg").textContent = "";
+  $("amount").focus();
+}
+
+function stopEdit() {
+  editingId = null;
+  $("amount").value = ""; $("note").value = ""; $("category").value = "";
+  $("date").value = today();
+  $("addBtn").textContent = "إضافة العملية";
+  $("cancelEditBtn").classList.add("hidden");
+}
+$("cancelEditBtn").onclick = stopEdit;
+
 async function remove(id) {
   if (!confirm("حذف هذه العملية نهائياً؟")) return;
-  const { error } = await db.from("transactions").delete().eq("id", id);
+  const { data, error } = await db.from("transactions").delete().eq("id", id).select();
   if (error) { $("appMsg").textContent = "تعذّر الحذف: " + error.message; return; }
+  if (!data || !data.length) { $("appMsg").textContent = "لا تملك صلاحية الحذف."; return; }
   load();
 }
+
+$("pwBtn").onclick = () => { $("pwPanel").classList.toggle("hidden"); $("pwMsg").textContent = ""; };
+$("pwSave").onclick = async () => {
+  const p1 = $("pw1").value, p2 = $("pw2").value, m = $("pwMsg");
+  m.style.color = "var(--out)";
+  if (p1.length < 10) { m.textContent = "كلمة المرور يجب ألا تقل عن 10 أحرف."; return; }
+  if (p1 !== p2) { m.textContent = "كلمتا المرور غير متطابقتين."; return; }
+  const { error } = await db.auth.updateUser({ password: p1 });
+  if (error) { m.textContent = "تعذّر التغيير: " + error.message; return; }
+  $("pw1").value = ""; $("pw2").value = "";
+  m.style.color = "var(--in)"; m.textContent = "تم تغيير كلمة المرور.";
+};
 
 $("month").onchange = render;
 $("allBtn").onclick = () => { $("month").value = ""; render(); };
