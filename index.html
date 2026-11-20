@@ -63,6 +63,10 @@
   .keys button.eq{background:var(--accent);color:var(--bg)}
   .keys .span2{grid-column:span 2}
   .calc .use{width:100%;margin-top:8px;font-size:.9rem}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:30;display:grid;place-items:center;padding:16px}
+  .mbox{max-width:100%;max-height:100%;display:flex;flex-direction:column;gap:10px;align-items:center}
+  .mbox img{max-width:100%;max-height:80vh;border-radius:8px;background:#fff}
+  .mbox button{background:var(--card);color:var(--ink)}
   .hidden{display:none}
   @media (max-width:520px){.grid{grid-template-columns:1fr}.totals b{font-size:1rem}}
 </style>
@@ -123,6 +127,9 @@
           <datalist id="cats"></datalist></div>
         <div><label for="date">التاريخ</label><input id="date" type="date" dir="ltr"></div>
         <div class="full"><label for="note">ملاحظة (اختياري)</label><input id="note"></div>
+        <div class="full"><label for="receipt">صورة الفاتورة (اختياري)</label>
+          <input id="receipt" type="file" accept="image/*">
+          <small id="receiptInfo" style="color:var(--mute)"></small></div>
         <div class="full" style="display:flex;gap:8px"><button id="addBtn">إضافة العملية</button><button class="ghost hidden" id="cancelEditBtn">إلغاء التعديل</button></div>
       </div>
       <div id="appMsg" role="alert" style="min-height:1.4em;font-size:.9rem;color:var(--out);margin-top:8px"></div>
@@ -138,6 +145,9 @@
     <button class="fab" id="calcFab" aria-label="الحاسبة">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/></svg>
     </button>
+    <div class="modal hidden" id="rcModal">
+      <div class="mbox"><button class="ghost" id="rcClose">إغلاق</button><img id="rcImg" alt="صورة الفاتورة"></div>
+    </div>
     <div class="calc hidden" id="calcPanel" role="dialog" aria-label="الحاسبة">
       <div class="screen"><div class="expr" id="calcExpr"></div><div class="res" id="calcRes">0</div></div>
       <div class="keys" id="calcKeys"></div>
@@ -251,8 +261,13 @@ function render() {
     const ed = document.createElement("button");
     ed.className = "del"; ed.textContent = "تعديل"; ed.onclick = () => startEdit(r);
     const acts = document.createElement("div"); acts.style.cssText = "display:flex;gap:6px";
-    acts.append(ed, d);
-    if (myRole === "owner") row.append(left, a, acts); else row.append(left, a);
+    if (r.receipt_path) {
+      const rc = document.createElement("button");
+      rc.className = "del"; rc.textContent = "فاتورة"; rc.onclick = () => showReceipt(r.receipt_path);
+      acts.append(rc);
+    }
+    if (myRole === "owner") acts.append(ed, d);
+    row.append(left, a, acts);
     list.append(row);
   });
 }
@@ -286,6 +301,40 @@ function renderChart(vis) {
   });
 }
 
+const MAX_DIM = 1600;
+
+async function compressImage(file) {
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+  catch (e) { bmp = await createImageBitmap(file); }
+  const scale = Math.min(1, MAX_DIM / Math.max(bmp.width, bmp.height));
+  const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(bmp, 0, 0, w, h);
+  return new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error("فشل ضغط الصورة")), "image/jpeg", 0.8));
+}
+
+async function uploadReceipt(file) {
+  const blob = await compressImage(file);
+  const { data: { session } } = await db.auth.getSession();
+  const path = session.user.id + "/" + crypto.randomUUID() + ".jpg";
+  const { error } = await db.storage.from("receipts").upload(path, blob, { contentType: "image/jpeg" });
+  if (error) throw error;
+  return path;
+}
+
+async function showReceipt(path) {
+  const { data, error } = await db.storage.from("receipts").createSignedUrl(path, 120);
+  if (error || !data) { alert("تعذّر فتح الصورة."); return; }
+  $("rcImg").src = data.signedUrl;
+  $("rcModal").classList.remove("hidden");
+}
+$("rcClose").onclick = () => { $("rcModal").classList.add("hidden"); $("rcImg").removeAttribute("src"); };
+$("rcModal").onclick = (e) => { if (e.target === $("rcModal")) $("rcClose").onclick(); };
+
 $("addBtn").onclick = async () => {
   $("appMsg").textContent = "";
   const amount = parseFloat($("amount").value);
@@ -297,16 +346,32 @@ $("addBtn").onclick = async () => {
     kind: $("kind").value, amount, category,
     note: $("note").value.trim() || null, tx_date: $("date").value
   };
+  const btn = $("addBtn");
+  btn.disabled = true;
+  let newPath = null;
+  const fail = async (msg) => {
+    if (newPath) await db.storage.from("receipts").remove([newPath]);
+    $("appMsg").textContent = msg;
+    btn.disabled = false;
+  };
+  try {
+    const file = $("receipt").files[0];
+    if (file) { newPath = await uploadReceipt(file); payload.receipt_path = newPath; }
+  } catch (e) { return fail("تعذّر رفع الصورة: " + (e.message || "خطأ غير معروف")); }
+
   if (editingId) {
+    const old = (rows.find(r => r.id === editingId) || {}).receipt_path;
     const { data, error } = await db.from("transactions").update(payload).eq("id", editingId).select();
-    if (error) { $("appMsg").textContent = "تعذّر الحفظ: " + error.message; return; }
-    if (!data || !data.length) { $("appMsg").textContent = "لا تملك صلاحية التعديل."; return; }
+    if (error) return fail("تعذّر الحفظ: " + error.message);
+    if (!data || !data.length) return fail("لا تملك صلاحية التعديل.");
+    if (newPath && old) await db.storage.from("receipts").remove([old]);
     stopEdit();
   } else {
     const { error } = await db.from("transactions").insert(payload);
-    if (error) { $("appMsg").textContent = "تعذّر الحفظ: " + error.message; return; }
-    $("amount").value = ""; $("note").value = "";
+    if (error) return fail("تعذّر الحفظ: " + error.message);
+    $("amount").value = ""; $("note").value = ""; $("receipt").value = ""; $("receiptInfo").textContent = "";
   }
+  btn.disabled = false;
   load();
 };
 
@@ -316,13 +381,15 @@ function startEdit(r) {
   $("date").value = r.tx_date; $("note").value = r.note || "";
   $("addBtn").textContent = "حفظ التعديل";
   $("cancelEditBtn").classList.remove("hidden");
+  $("receipt").value = "";
+  $("receiptInfo").textContent = r.receipt_path ? "يوجد فاتورة مرفقة. اختيار صورة جديدة سيستبدلها." : "";
   $("appMsg").textContent = "";
   $("amount").focus();
 }
 
 function stopEdit() {
   editingId = null;
-  $("amount").value = ""; $("note").value = ""; $("category").value = "";
+  $("amount").value = ""; $("note").value = ""; $("category").value = ""; $("receipt").value = ""; $("receiptInfo").textContent = "";
   $("date").value = today();
   $("addBtn").textContent = "إضافة العملية";
   $("cancelEditBtn").classList.add("hidden");
@@ -334,6 +401,7 @@ async function remove(id) {
   const { data, error } = await db.from("transactions").delete().eq("id", id).select();
   if (error) { $("appMsg").textContent = "تعذّر الحذف: " + error.message; return; }
   if (!data || !data.length) { $("appMsg").textContent = "لا تملك صلاحية الحذف."; return; }
+  if (data[0].receipt_path) await db.storage.from("receipts").remove([data[0].receipt_path]);
   load();
 }
 
