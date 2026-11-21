@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet">
 <style>
-  :root{--bg:#f3f5f4;--card:#fff;--ink:#17211f;--mute:#667370;--line:#dfe5e3;--in:#0f7b5f;--out:#b3382c;--accent:#17211f;}
-  @media (prefers-color-scheme:dark){:root{--bg:#121816;--card:#1a2321;--ink:#e8efed;--mute:#93a39f;--line:#2b3835;--in:#3fcf9f;--out:#ff8b7d;--accent:#e8efed;}}
+  :root{--bg:#f3f5f4;--card:#fff;--ink:#17211f;--mute:#667370;--line:#dfe5e3;--in:#0f7b5f;--out:#b3382c;--warn:#b7791f;--accent:#17211f;}
+  @media (prefers-color-scheme:dark){:root{--bg:#121816;--card:#1a2321;--ink:#e8efed;--mute:#93a39f;--line:#2b3835;--in:#3fcf9f;--out:#ff8b7d;--warn:#f0b455;--accent:#e8efed;}}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans Arabic",Tahoma,sans-serif;line-height:1.6}
   .wrap{max-width:760px;margin:0 auto;padding:20px 16px 100px}
@@ -141,7 +141,20 @@
     </div>
 
     <div class="panel">
-      <h2 class="ptitle">المصروفات حسب الفئة</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h2 class="ptitle" style="margin:0">المصروفات حسب الفئة</h2>
+        <button class="ghost hidden" id="budgetToggle" style="padding:6px 12px">الميزانيات</button>
+      </div>
+      <small id="chartHint" style="color:var(--mute);display:block;margin-bottom:10px"></small>
+      <div id="budgetPanel" class="hidden" style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:14px">
+        <div class="grid">
+          <div><label for="bCat">الفئة</label><input id="bCat" list="cats"></div>
+          <div><label for="bLimit">الحد الشهري</label><input id="bLimit" type="number" min="0" step="0.01" inputmode="decimal" dir="ltr"></div>
+          <div class="full"><button id="bSave">حفظ الميزانية</button></div>
+        </div>
+        <div id="bMsg" role="alert" style="min-height:1.4em;font-size:.9rem;color:var(--out);margin-top:6px"></div>
+        <div id="bList"></div>
+      </div>
       <div id="chart"></div>
     </div>
 
@@ -174,6 +187,7 @@ const $ = id => document.getElementById(id);
 let rows = [];
 let myRole = null;
 let editingId = null;
+let budgets = {};
 
 const fmt = n => Number(n).toLocaleString("en-US", {maximumFractionDigits: 2}) + (CURRENCY ? " " + CURRENCY : "");
 const today = () => {
@@ -191,6 +205,7 @@ async function refreshSession() {
     $("month").value = today().slice(0, 7);
     await loadRole();
     $("formPanel").classList.toggle("hidden", myRole === "viewer");
+    $("budgetToggle").classList.toggle("hidden", myRole !== "owner");
     if (!myRole) {
       rows = []; render();
       $("addBtn").disabled = true;
@@ -230,6 +245,7 @@ async function load() {
   $("cats").replaceChildren(...[...new Set(rows.map(r => r.category))].map(c => {
     const o = document.createElement("option"); o.value = c; return o;
   }));
+  await loadBudgets();
   render();
 }
 
@@ -283,10 +299,16 @@ function render() {
 function renderChart(vis) {
   const box = $("chart");
   box.replaceChildren();
+  const month = $("month").value;
+  const hasBudgets = month && Object.keys(budgets).length > 0;
+  $("chartHint").textContent = hasBudgets
+    ? "الفئات التي لها ميزانية يقيس شريطها الصرف من الحد الشهري، وغيرها يقيس حصتها من إجمالي المصروفات."
+    : "";
   const sums = {};
   vis.filter(r => r.kind === "expense").forEach(r => {
     sums[r.category] = (sums[r.category] || 0) + Number(r.amount);
   });
+  if (month) Object.keys(budgets).forEach(c => { if (!(c in sums)) sums[c] = 0; });
   const entries = Object.entries(sums).sort((a, b) => b[1] - a[1]);
   const total = entries.reduce((s, e) => s + e[1], 0);
   if (!entries.length) {
@@ -295,19 +317,76 @@ function renderChart(vis) {
     box.append(e); return;
   }
   entries.forEach(([name, val]) => {
-    const pct = val / total * 100;
+    const limit = month ? budgets[name] : undefined;
     const wrap = document.createElement("div"); wrap.className = "cat";
     const top = document.createElement("div"); top.className = "top";
     const n = document.createElement("span"); n.textContent = name;
-    const v = document.createElement("span"); v.textContent = fmt(val) + " · " + pct.toFixed(0) + "%";
-    top.append(n, v);
+    const v = document.createElement("span");
     const track = document.createElement("div"); track.className = "track";
-    const fill = document.createElement("div"); fill.className = "fill"; fill.style.width = pct + "%";
+    const fill = document.createElement("div"); fill.className = "fill";
+    let note = null;
+    if (limit) {
+      const ratio = val / limit;
+      fill.style.width = Math.min(100, ratio * 100) + "%";
+      fill.style.background = ratio > 1 ? "var(--out)" : ratio >= 0.8 ? "var(--warn)" : "var(--in)";
+      v.textContent = fmt(val) + " من " + fmt(limit) + " · " + Math.round(ratio * 100) + "%";
+      if (ratio > 1) {
+        note = document.createElement("small");
+        note.style.color = "var(--out)";
+        note.textContent = "تجاوزت الحد بمقدار " + fmt(val - limit);
+      }
+    } else {
+      const pct = val / total * 100;
+      fill.style.width = pct + "%";
+      v.textContent = fmt(val) + " · " + pct.toFixed(0) + "%";
+    }
+    top.append(n, v);
     track.append(fill);
     wrap.append(top, track);
+    if (note) wrap.append(note);
     box.append(wrap);
   });
 }
+
+async function loadBudgets() {
+  const { data, error } = await db.from("budgets").select("*");
+  budgets = {};
+  if (!error && data) data.forEach(x => { budgets[x.category] = Number(x.monthly_limit); });
+  renderBudgetList();
+}
+
+function renderBudgetList() {
+  const box = $("bList");
+  box.replaceChildren();
+  Object.entries(budgets).sort((a, b) => a[0].localeCompare(b[0], "ar")).forEach(([c, l]) => {
+    const row = document.createElement("div"); row.className = "row";
+    const n = document.createElement("div"); n.textContent = c + " — " + fmt(l);
+    const d = document.createElement("button"); d.className = "del"; d.textContent = "حذف";
+    d.onclick = () => deleteBudget(c);
+    row.append(n, d);
+    box.append(row);
+  });
+}
+
+async function deleteBudget(c) {
+  if (!confirm("حذف ميزانية " + c + "؟")) return;
+  const { data, error } = await db.from("budgets").delete().eq("category", c).select();
+  if (error) { $("bMsg").textContent = "تعذّر الحذف: " + error.message; return; }
+  if (!data || !data.length) { $("bMsg").textContent = "لا تملك صلاحية الحذف."; return; }
+  await loadBudgets(); render();
+}
+
+$("budgetToggle").onclick = () => $("budgetPanel").classList.toggle("hidden");
+$("bSave").onclick = async () => {
+  const m = $("bMsg"); m.textContent = "";
+  const category = $("bCat").value.trim();
+  const limit = parseFloat($("bLimit").value);
+  if (!category || !(limit > 0)) { m.textContent = "أدخل فئة وحداً أكبر من صفر."; return; }
+  const { error } = await db.from("budgets").upsert({ category, monthly_limit: limit, updated_at: new Date().toISOString() });
+  if (error) { m.textContent = "تعذّر الحفظ: " + error.message; return; }
+  $("bCat").value = ""; $("bLimit").value = "";
+  await loadBudgets(); render();
+};
 
 const MAX_DIM = 1600;
 
