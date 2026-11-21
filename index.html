@@ -241,9 +241,25 @@ $("loginBtn").onclick = async () => {
 $("logoutBtn").onclick = async () => { await db.auth.signOut(); rows = []; myRole = null; refreshSession(); };
 
 /* ---------- البيانات ---------- */
+async function fetchAll() {
+  const PAGE = 1000, MAX_PAGES = 100;
+  const all = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * PAGE;
+    const { data, error } = await db.from("transactions").select("*")
+      .order("tx_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) return { error };
+    if (!data.length) break;
+    all.push(...data);
+  }
+  return { data: all };
+}
+
 async function load() {
-  const { data, error } = await db.from("transactions")
-    .select("*").order("tx_date", { ascending: false }).order("created_at", { ascending: false });
+  const { data, error } = await fetchAll();
   if (error) { $("appMsg").textContent = "تعذّر جلب البيانات: " + error.message; return; }
   rows = data;
   $("cats").replaceChildren(...[...new Set(rows.map(r => r.category))].map(c => {
