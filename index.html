@@ -78,8 +78,8 @@
   <section id="loginView" class="hidden">
     <header><h1>دفتر الحسابات</h1></header>
     <div class="panel">
-      <label for="email">البريد الإلكتروني</label>
-      <input id="email" type="email" autocomplete="username" dir="ltr">
+      <label for="email">اسم المستخدم أو البريد الإلكتروني</label>
+      <input id="email" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" dir="ltr">
       <div style="height:12px"></div>
       <label for="password">كلمة المرور</label>
       <input id="password" type="password" autocomplete="current-password" dir="ltr">
@@ -182,6 +182,7 @@
 /* ===== الإعدادات: استبدل القيمتين من لوحة Supabase (Project Settings > API) ===== */
 const SUPABASE_URL = "https://fpxthuiyshmmnrfjhqcc.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable___otMdd1kfWmnlhwqomAbA_lKwE2gtc";
+const USERNAME_DOMAIN = "example.com"; // نطاق وهمي محجوز للتجارب، لا تغيّره بعد إنشاء الحسابات
 const CURRENCY = ""; // مثال: "ر.س" أو "$" أو اتركها فارغة
 /* مهم: لا تضع هنا مفتاح service_role أبداً */
 
@@ -227,13 +228,25 @@ async function loadRole() {
   $("roleBadge").textContent = myRole === "owner" ? "(المالك)" : myRole === "viewer" ? "(القراءة فقط)" : "";
 }
 
+function toLoginEmail(raw) {
+  const v = raw.trim();
+  if (!v) return { error: "اكتب اسم المستخدم أو البريد الإلكتروني." };
+  if (v.includes("@")) return { email: v };
+  if (!/^[A-Za-z0-9._-]{3,32}$/.test(v)) {
+    return { error: "اسم المستخدم: أحرف إنجليزية وأرقام و . _ - فقط (من 3 إلى 32)." };
+  }
+  return { email: v.toLowerCase() + "@" + USERNAME_DOMAIN };
+}
+
 $("loginBtn").onclick = async () => {
   $("msg").textContent = "";
+  const login = toLoginEmail($("email").value);
+  if (login.error) { $("msg").textContent = login.error; return; }
   const { error } = await db.auth.signInWithPassword({
-    email: $("email").value.trim(),
+    email: login.email,
     password: $("password").value
   });
-  if (error) { $("msg").textContent = "فشل الدخول: تأكد من البريد وكلمة المرور."; return; }
+  if (error) { $("msg").textContent = "فشل الدخول: تأكد من اسم المستخدم أو البريد وكلمة المرور."; return; }
   $("password").value = "";
   refreshSession();
 };
