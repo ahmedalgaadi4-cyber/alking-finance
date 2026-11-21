@@ -210,6 +210,8 @@ async function refreshSession() {
     await loadRole();
     $("formPanel").classList.toggle("hidden", myRole === "viewer");
     $("budgetToggle").classList.toggle("hidden", myRole !== "owner");
+    $("pwBtn").classList.toggle("hidden", myRole !== "owner");
+    if (myRole !== "owner") $("pwPanel").classList.add("hidden");
     $("importBtn").classList.toggle("hidden", myRole !== "owner");
     if (!myRole) {
       rows = []; render();
