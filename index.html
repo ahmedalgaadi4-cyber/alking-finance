@@ -555,7 +555,11 @@ $("allBtn").onclick = () => { $("month").value = ""; render(); };
 
 /* ---------- تصدير CSV (نسخة احتياطية على جهازك) ---------- */
 $("csvBtn").onclick = () => {
-  const esc = v => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+  const esc = v => {
+    let s = String(v ?? "");
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // يمنع تفسير الخلية كصيغة في Excel وGoogle Sheets
+    return '"' + s.replace(/"/g, '""') + '"';
+  };
   const lines = [["date", "kind", "amount", "category", "note"].join(",")]
     .concat(visibleRows().map(r => [r.tx_date, r.kind, r.amount, r.category, r.note].map(esc).join(",")));
   const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
