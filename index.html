@@ -124,6 +124,7 @@
       <div class="ledgerBar">
         <select id="ledgerSelect" aria-label="الدفتر الحالي"></select>
         <button class="ghost hidden" id="ledgerAddBtn">+ دفتر جديد</button>
+        <button class="ghost hidden" id="ledgerDelBtn" style="color:var(--out)">حذف الدفتر</button>
       </div>
       <div id="impMsg" role="status" style="font-size:.9rem;margin-bottom:10px"></div>
       <div class="hero"><span>الرصيد</span><b id="tBal">0</b></div>
@@ -223,6 +224,7 @@ async function refreshSession() {
     if (myRole !== "owner") $("pwPanel").classList.add("hidden");
     $("importBtn").classList.toggle("hidden", myRole !== "owner");
     $("ledgerAddBtn").classList.toggle("hidden", myRole !== "owner");
+    $("ledgerDelBtn").classList.toggle("hidden", myRole !== "owner");
     if (!myRole) {
       rows = []; render();
       $("addBtn").disabled = true;
@@ -293,6 +295,45 @@ $("ledgerAddBtn").onclick = async () => {
   await loadLedgers();
   await loadBudgets();
   await load();
+};
+
+$("ledgerDelBtn").onclick = async () => {
+  if (ledgers.length <= 1) { alert("لا يمكن حذف الدفتر الوحيد المتبقي."); return; }
+  const cur = ledgers.find(l => l.id === currentLedgerId);
+  if (!cur) return;
+
+  const { data: txs, error: e1 } = await db.from("transactions")
+    .select("id, receipt_path").eq("ledger_id", currentLedgerId);
+  if (e1) { alert("تعذّر التحقق من محتوى الدفتر: " + e1.message); return; }
+
+  let msg = 'سيُحذف دفتر "' + cur.name + '" نهائياً مع ' + txs.length + ' عملية، ولا يمكن التراجع عن هذا.';
+  if (cur.viewer_visible) msg += '\n\nتنبيه: هذا هو الدفتر الذي يراه حساب القراءة (ahmed)، وسيفقد الوصول إليه بعد الحذف.';
+  if (!confirm(msg)) return;
+  if (prompt('للتأكيد النهائي، اكتب اسم الدفتر بالضبط: "' + cur.name + '"') !== cur.name) {
+    alert("تم الإلغاء، الاسم غير مطابق."); return;
+  }
+
+  $("ledgerDelBtn").disabled = true;
+  try {
+    const paths = txs.map(t => t.receipt_path).filter(Boolean);
+    if (paths.length) await db.storage.from("receipts").remove(paths);
+
+    const { error: e2 } = await db.from("budgets").delete().eq("ledger_id", currentLedgerId);
+    if (e2) throw e2;
+    const { error: e3 } = await db.from("transactions").delete().eq("ledger_id", currentLedgerId);
+    if (e3) throw e3;
+    const { error: e4 } = await db.from("ledgers").delete().eq("id", currentLedgerId);
+    if (e4) throw e4;
+
+    currentLedgerId = null;
+    await loadLedgers();
+    await loadBudgets();
+    await load();
+  } catch (e) {
+    alert("تعذّر إتمام الحذف: " + (e.message || e));
+  } finally {
+    $("ledgerDelBtn").disabled = false;
+  }
 };
 
 async function fetchAll() {
