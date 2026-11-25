@@ -232,6 +232,7 @@ async function refreshSession() {
       return;
     }
     $("addBtn").disabled = false;
+    await loadLedgers();
     await load();
   }
 }
@@ -268,11 +269,22 @@ $("loginBtn").onclick = async () => {
 $("logoutBtn").onclick = async () => { await db.auth.signOut(); rows = []; myRole = null; refreshSession(); };
 
 /* ---------- البيانات ---------- */
+function rememberLedger(id) {
+  try { localStorage.setItem("financeLastLedgerId", id); } catch (e) {}
+}
+function recallLedger() {
+  try { return localStorage.getItem("financeLastLedgerId"); } catch (e) { return null; }
+}
+
 async function loadLedgers() {
   const { data, error } = await db.from("ledgers").select("*").order("created_at", { ascending: true });
   ledgers = (!error && data) ? data : [];
   if (!ledgers.length) { $("ledgerSelect").replaceChildren(); return; }
-  if (!currentLedgerId || !ledgers.some(l => l.id === currentLedgerId)) currentLedgerId = ledgers[0].id;
+  if (!currentLedgerId || !ledgers.some(l => l.id === currentLedgerId)) {
+    const saved = recallLedger();
+    currentLedgerId = (saved && ledgers.some(l => l.id === saved)) ? saved : ledgers[0].id;
+  }
+  rememberLedger(currentLedgerId);
   $("ledgerSelect").replaceChildren(...ledgers.map(l => {
     const o = document.createElement("option"); o.value = l.id; o.textContent = l.name;
     if (l.id === currentLedgerId) o.selected = true;
@@ -282,16 +294,24 @@ async function loadLedgers() {
 
 $("ledgerSelect").onchange = async () => {
   currentLedgerId = $("ledgerSelect").value;
+  rememberLedger(currentLedgerId);
   await loadBudgets();
   await load();
 };
 
 $("ledgerAddBtn").onclick = async () => {
-  const name = prompt("اسم الدفتر الجديد:");
-  if (!name || !name.trim()) return;
-  const { data, error } = await db.from("ledgers").insert({ name: name.trim(), viewer_visible: false }).select().single();
-  if (error) { alert("تعذّر إنشاء الدفتر: " + error.message); return; }
+  const raw = prompt("اسم الدفتر الجديد:");
+  if (!raw || !raw.trim()) return;
+  const name = raw.trim();
+  const dup = ledgers.some(l => l.name.trim().toLowerCase() === name.toLowerCase());
+  if (dup) { alert('يوجد دفتر بهذا الاسم بالفعل: "' + name + '". اختر اسماً مختلفاً.'); return; }
+  const { data, error } = await db.from("ledgers").insert({ name, viewer_visible: false }).select().single();
+  if (error) {
+    const msg = /duplicate|unique/i.test(error.message) ? 'يوجد دفتر بهذا الاسم بالفعل.' : ('تعذّر إنشاء الدفتر: ' + error.message);
+    alert(msg); return;
+  }
   currentLedgerId = data.id;
+  rememberLedger(currentLedgerId);
   await loadLedgers();
   await loadBudgets();
   await load();
@@ -361,7 +381,6 @@ async function load() {
   $("cats").replaceChildren(...[...new Set(rows.map(r => r.category))].map(c => {
     const o = document.createElement("option"); o.value = c; return o;
   }));
-  await loadLedgers();
   await loadBudgets();
   render();
 }
