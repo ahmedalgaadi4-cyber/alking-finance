@@ -67,6 +67,9 @@
   .mbox{max-width:100%;max-height:100%;display:flex;flex-direction:column;gap:10px;align-items:center}
   .mbox img{max-width:100%;max-height:80vh;border-radius:8px;background:#fff}
   .mbox button{background:var(--card);color:var(--ink)}
+  .ledgerBar{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+  .ledgerBar select{flex:1;font-weight:600}
+  .ledgerBar button{padding:10px 14px;white-space:nowrap}
   .hidden{display:none}
   @media (max-width:520px){.grid{grid-template-columns:1fr}.totals b{font-size:1rem}}
 </style>
@@ -117,6 +120,10 @@
         <button class="ghost" id="csvBtn">تصدير CSV</button>
         <button class="ghost hidden" id="importBtn">استيراد CSV</button>
         <input id="importFile" type="file" accept=".csv,text/csv" class="hidden">
+      </div>
+      <div class="ledgerBar">
+        <select id="ledgerSelect" aria-label="الدفتر الحالي"></select>
+        <button class="ghost hidden" id="ledgerAddBtn">+ دفتر جديد</button>
       </div>
       <div id="impMsg" role="status" style="font-size:.9rem;margin-bottom:10px"></div>
       <div class="hero"><span>الرصيد</span><b id="tBal">0</b></div>
@@ -192,6 +199,8 @@ let rows = [];
 let myRole = null;
 let editingId = null;
 let budgets = {};
+let ledgers = [];
+let currentLedgerId = null;
 
 const fmt = n => Number(n).toLocaleString("en-US", {maximumFractionDigits: 2}) + (CURRENCY ? " " + CURRENCY : "");
 const today = () => {
@@ -213,6 +222,7 @@ async function refreshSession() {
     $("pwBtn").classList.toggle("hidden", myRole !== "owner");
     if (myRole !== "owner") $("pwPanel").classList.add("hidden");
     $("importBtn").classList.toggle("hidden", myRole !== "owner");
+    $("ledgerAddBtn").classList.toggle("hidden", myRole !== "owner");
     if (!myRole) {
       rows = []; render();
       $("addBtn").disabled = true;
@@ -256,6 +266,35 @@ $("loginBtn").onclick = async () => {
 $("logoutBtn").onclick = async () => { await db.auth.signOut(); rows = []; myRole = null; refreshSession(); };
 
 /* ---------- البيانات ---------- */
+async function loadLedgers() {
+  const { data, error } = await db.from("ledgers").select("*").order("created_at", { ascending: true });
+  ledgers = (!error && data) ? data : [];
+  if (!ledgers.length) { $("ledgerSelect").replaceChildren(); return; }
+  if (!currentLedgerId || !ledgers.some(l => l.id === currentLedgerId)) currentLedgerId = ledgers[0].id;
+  $("ledgerSelect").replaceChildren(...ledgers.map(l => {
+    const o = document.createElement("option"); o.value = l.id; o.textContent = l.name;
+    if (l.id === currentLedgerId) o.selected = true;
+    return o;
+  }));
+}
+
+$("ledgerSelect").onchange = async () => {
+  currentLedgerId = $("ledgerSelect").value;
+  await loadBudgets();
+  await load();
+};
+
+$("ledgerAddBtn").onclick = async () => {
+  const name = prompt("اسم الدفتر الجديد:");
+  if (!name || !name.trim()) return;
+  const { data, error } = await db.from("ledgers").insert({ name: name.trim(), viewer_visible: false }).select().single();
+  if (error) { alert("تعذّر إنشاء الدفتر: " + error.message); return; }
+  currentLedgerId = data.id;
+  await loadLedgers();
+  await loadBudgets();
+  await load();
+};
+
 async function fetchAll() {
   const PAGE = 1000, MAX_PAGES = 100;
   const all = [];
@@ -265,6 +304,7 @@ async function fetchAll() {
       .order("tx_date", { ascending: false })
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
+      .eq("ledger_id", currentLedgerId)
       .range(from, from + PAGE - 1);
     if (error) return { error };
     if (!data.length) break;
@@ -280,6 +320,7 @@ async function load() {
   $("cats").replaceChildren(...[...new Set(rows.map(r => r.category))].map(c => {
     const o = document.createElement("option"); o.value = c; return o;
   }));
+  await loadLedgers();
   await loadBudgets();
   render();
 }
@@ -384,7 +425,7 @@ function renderChart(vis) {
 }
 
 async function loadBudgets() {
-  const { data, error } = await db.from("budgets").select("*");
+  const { data, error } = await db.from("budgets").select("*").eq("ledger_id", currentLedgerId);
   budgets = {};
   if (!error && data) data.forEach(x => { budgets[x.category] = Number(x.monthly_limit); });
   renderBudgetList();
@@ -417,7 +458,7 @@ $("bSave").onclick = async () => {
   const category = $("bCat").value.trim();
   const limit = parseFloat($("bLimit").value);
   if (!category || !(limit > 0)) { m.textContent = "أدخل فئة وحداً أكبر من صفر."; return; }
-  const { error } = await db.from("budgets").upsert({ category, monthly_limit: limit, updated_at: new Date().toISOString() });
+  const { error } = await db.from("budgets").upsert({ category, monthly_limit: limit, updated_at: new Date().toISOString(), ledger_id: currentLedgerId });
   if (error) { m.textContent = "تعذّر الحفظ: " + error.message; return; }
   $("bCat").value = ""; $("bLimit").value = "";
   await loadBudgets(); render();
@@ -466,7 +507,8 @@ $("addBtn").onclick = async () => {
   }
   const payload = {
     kind: $("kind").value, amount, category,
-    note: $("note").value.trim() || null, tx_date: $("date").value
+    note: $("note").value.trim() || null, tx_date: $("date").value,
+    ledger_id: currentLedgerId
   };
   const btn = $("addBtn");
   btn.disabled = true;
@@ -707,7 +749,7 @@ $("importFile").onchange = async () => {
     if (!okDate || !kind || !isFinite(amount) || !(amount > 0) || !category || category.length > 100 || note.length > 500) {
       bad++; if (badRows.length < 5) badRows.push(i + offset); return;
     }
-    const rec = { tx_date: date, kind, amount: Math.round(amount * 100) / 100, category, note: note || null };
+    const rec = { tx_date: date, kind, amount: Math.round(amount * 100) / 100, category, note: note || null, ledger_id: currentLedgerId };
     const k = rowKey(rec);
     if ((counts.get(k) || 0) > 0) { counts.set(k, counts.get(k) - 1); dup++; return; }
     good.push(rec);
